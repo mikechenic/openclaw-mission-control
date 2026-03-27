@@ -9,6 +9,7 @@
 		"dev:backend": "convex dev",
 		"dev:logs-dashboard": "node scripts/logs-dashboard.mjs",
 		"test:hook": "vitest run --config vitest.hook.config.ts test_hook.ts",
+		"test:hook:rootdb": "vitest run --config vitest.hook.config.ts test_hook_rootdb.ts",
 		"predev": "convex dev --until-success && convex dev --once --run-sh \"node setup.mjs --once\" && convex dashboard",
 		"build": "tsc -b && vite build",
 		"lint": "tsc && eslint .  --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
