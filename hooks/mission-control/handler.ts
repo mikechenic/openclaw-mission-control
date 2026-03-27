@@ -461,12 +461,12 @@ async function findAgentEventsModule(): Promise<{
 }
 
 const handler = async (event: HookEvent) => {
+  console.log(`[mission-control] Event: ${event.type}:${event.action} session=${event.sessionKey}`);
+  
   if (!missionControlDbPath) {
     const cfg = event.context.cfg as OpenClawConfig | undefined;
     missionControlDbPath = resolveUrl(cfg);
   }
-
-  console.log(`[mission-control] Event: ${event.type}:${event.action} session=${event.sessionKey}`);
 
   // Handle agent bootstrap - store session info for later
   if (event.type === "agent" && event.action === "bootstrap") {
