@@ -50,6 +50,9 @@ const lastRealRunId = new Map<string, string>();
 // Track pending write tool calls by toolCallId
 const pendingWrites = new Map<string, { filePath: string; content: string; sessionKey: string }>();
 
+// Fallback run tracking when agent-events stream is unavailable
+const commandRunIdBySession = new Map<string, string>();
+
 function resolveDbPath(cfg?: OpenClawConfig): string | undefined {
   const hookConfig = cfg?.hooks?.internal?.entries?.["mission-control"];
   return hookConfig?.env?.MISSION_CONTROL_DB_PATH || hookConfig?.env?.SQLITE_DB_PATH || process.env.MISSION_CONTROL_DB_PATH || process.env.SQLITE_DB_PATH;
@@ -432,6 +435,7 @@ async function findAgentEventsModule(): Promise<{
   const searchPaths = [
     "/usr/local/lib/node_modules/openclaw/dist/infra/agent-events.js",
     "/opt/homebrew/lib/node_modules/openclaw/dist/infra/agent-events.js",
+    "/opt/openclaw/moltbot/dist/infra/agent-events.js",
   ];
 
   const mainPath = process.argv[1];
@@ -446,9 +450,17 @@ async function findAgentEventsModule(): Promise<{
     searchPaths.push(path.join(home, ".npm-global", "lib", "node_modules", "openclaw", "dist", "infra", "agent-events.js"));
   }
 
+  // Common local-project layouts when running from a workspace checkout
+  const cwd = process.cwd();
+  if (cwd) {
+    searchPaths.push(path.join(cwd, "dist", "infra", "agent-events.js"));
+    searchPaths.push(path.join(cwd, "..", "dist", "infra", "agent-events.js"));
+  }
+
   for (const searchPath of searchPaths) {
     try {
       if (fs.existsSync(searchPath)) {
+        console.log("[mission-control] Loading agent-events module from:", searchPath);
         const module = await import(`file://${searchPath}`);
         if (typeof module.onAgentEvent === "function") return module;
       }
@@ -480,6 +492,28 @@ const handler = async (event: HookEvent) => {
     return;
   }
 
+  // Fallback logging path when lifecycle stream listener is unavailable.
+  // This guarantees at least one DB record per user command.
+  if (event.type === "command" && event.action === "new") {
+    const runId = `hook-${event.sessionKey}-${Date.now()}`;
+    commandRunIdBySession.set(event.sessionKey, runId);
+    lastRealRunId.set(event.sessionKey, runId);
+
+    const prompt = event.messages.length > 0 ? event.messages.join("\n") : null;
+
+    void postToMissionControl({
+      runId,
+      action: "start",
+      sessionKey: event.sessionKey,
+      timestamp: event.timestamp.toISOString(),
+      prompt,
+      source: "hook:command:new",
+      eventType: "hook:command:new",
+    });
+
+    return;
+  }
+
   // Register listener on gateway startup
   if (event.type === "gateway" && event.action === "startup") {
     if (listenerRegistered) return;
@@ -494,7 +528,8 @@ const handler = async (event: HookEvent) => {
     try {
       const agentEvents = await findAgentEventsModule();
       if (!agentEvents) {
-        console.error("[mission-control] Could not find agent-events module");
+        console.error("[mission-control] Could not find agent-events module; using command:new fallback logging only");
+        listenerRegistered = true;
         return;
       }
 
