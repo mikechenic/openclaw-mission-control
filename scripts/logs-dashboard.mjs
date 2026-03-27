@@ -91,6 +91,11 @@ function readDashboardHtml() {
 const server = http.createServer((req, res) => {
   const url = req.url || "/";
 
+  if (url === "/health") {
+    sendJson(res, { ok: true, service: "logs-dashboard", dbPath });
+    return;
+  }
+
   if (url === "/api/logs") {
     try {
       const payload = readLogs();
@@ -121,10 +126,16 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  if (url === "/" || url.startsWith("/?")) {
+  if (url === "/" || url === "/index.html" || url.startsWith("/?") || url.startsWith("/index.html?")) {
     const html = readDashboardHtml();
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
+    return;
+  }
+
+  if (url === "/favicon.ico") {
+    res.writeHead(204);
+    res.end();
     return;
   }
 
