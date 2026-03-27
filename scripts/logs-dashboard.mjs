@@ -1,3 +1,6 @@
+// run with `npm run dev:logs-dashboard` to start a local server that serves a dashboard for viewing logs from the SQLite database used by Mission Control. 
+// The dashboard is accessible at http://localhost:8083 by default, and it reads from the database file specified by the MISSION_CONTROL_DB_PATH or 
+// SQLITE_DB_PATH environment variable (or defaults to /root/.openclaw/mission-control/events.db).
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";

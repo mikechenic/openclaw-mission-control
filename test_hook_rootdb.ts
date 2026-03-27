@@ -1,3 +1,7 @@
+// To run this test, use `npm run test:hook:rootdb`. It verifies that the mission control hook handler can create and write to a 
+// SQLite database at the fixed path of /root/.openclaw/mission-control/test.db, which is used for testing purposes. 
+// The test loads the handler module, simulates a startup event to initialize the database, then simulates a lifecycle start event to write a task entry. 
+// Finally, it reads directly from the SQLite database to confirm that the entry was written correctly.
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";

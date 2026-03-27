@@ -1,3 +1,6 @@
+// To run this test, use `npm run test:hook`. It verifies that the mission control hook handler can create and write to a SQLite database at a specified path. 
+// The test loads the handler module, simulates a startup event to initialize the database, then simulates a lifecycle start event to write a task entry. 
+// Finally, it reads directly from the SQLite database to confirm that the entry was written correctly.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
