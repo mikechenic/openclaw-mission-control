@@ -38,7 +38,7 @@ type OpenClawConfig = {
 };
 
 let listenerRegistered = false;
-let db: Database.Database | null = null;
+let db: InstanceType<typeof Database> | null = null;
 let missionControlDbPath: string | undefined;
 
 // Track session info by sessionKey
@@ -61,7 +61,7 @@ export function resolveUrl(cfg?: OpenClawConfig): string | undefined {
   return resolveDbPath(cfg);
 }
 
-function initializeDatabase(): Database.Database {
+function initializeDatabase(): InstanceType<typeof Database> {
   if (db) return db;
 
   const defaultDbPath = "/root/.openclaw/mission-control/events.db";
@@ -105,8 +105,7 @@ function initializeDatabase(): Database.Database {
       message TEXT,
       data JSON,
       timestamp DATETIME NOT NULL,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (runId) REFERENCES tasks(runId)
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS documents (
@@ -120,12 +119,67 @@ function initializeDatabase(): Database.Database {
       path TEXT,
       eventType TEXT,
       timestamp DATETIME NOT NULL,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (runId) REFERENCES tasks(runId)
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_tasks_sessionKey ON tasks(sessionKey);
     CREATE INDEX IF NOT EXISTS idx_tasks_runId ON tasks(runId);
+    CREATE INDEX IF NOT EXISTS idx_events_runId ON events(runId);
+    CREATE INDEX IF NOT EXISTS idx_documents_runId ON documents(runId);
+  `);
+
+  // Repair old schemas that used invalid foreign keys on runId.
+  // In SQLite, a foreign key target must be PRIMARY KEY or UNIQUE, which tasks.runId is not.
+  const repairTableIfNeeded = (tableName: "events" | "documents", createSql: string, copySql: string) => {
+    const fkList = db!.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as Array<{ table?: string; from?: string; to?: string }>;
+    const hasInvalidLegacyFk = fkList.some(fk => fk.table === "tasks" && fk.from === "runId" && fk.to === "runId");
+    if (!hasInvalidLegacyFk) return;
+
+    db!.exec(`
+      ALTER TABLE ${tableName} RENAME TO ${tableName}_old;
+      ${createSql}
+      ${copySql}
+      DROP TABLE ${tableName}_old;
+    `);
+  };
+
+  repairTableIfNeeded(
+    "events",
+    `CREATE TABLE events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      runId TEXT NOT NULL,
+      sessionKey TEXT NOT NULL,
+      eventType TEXT NOT NULL,
+      action TEXT NOT NULL,
+      message TEXT,
+      data JSON,
+      timestamp DATETIME NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`,
+    `INSERT INTO events (id, runId, sessionKey, eventType, action, message, data, timestamp, createdAt)
+     SELECT id, runId, sessionKey, eventType, action, message, data, timestamp, createdAt FROM events_old;`
+  );
+
+  repairTableIfNeeded(
+    "documents",
+    `CREATE TABLE documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      runId TEXT NOT NULL,
+      sessionKey TEXT NOT NULL,
+      agentId TEXT,
+      title TEXT NOT NULL,
+      content TEXT,
+      type TEXT NOT NULL,
+      path TEXT,
+      eventType TEXT,
+      timestamp DATETIME NOT NULL,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`,
+    `INSERT INTO documents (id, runId, sessionKey, agentId, title, content, type, path, eventType, timestamp, createdAt)
+     SELECT id, runId, sessionKey, agentId, title, content, type, path, eventType, timestamp, createdAt FROM documents_old;`
+  );
+
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_events_runId ON events(runId);
     CREATE INDEX IF NOT EXISTS idx_documents_runId ON documents(runId);
   `);
