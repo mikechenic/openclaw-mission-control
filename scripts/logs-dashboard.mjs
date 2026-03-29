@@ -43,9 +43,14 @@ function safeQuery(sql) {
 
 function readLogs() {
   const tasks = safeQuery(
-    `SELECT id, runId, sessionKey, agentId, status, prompt, response, error, source, timestamp, createdAt
-     FROM tasks
-     ORDER BY id DESC
+    `SELECT t.id, t.runId, t.sessionKey, t.agentId, t.status, t.prompt, t.response, t.error, t.source, t.timestamp, t.createdAt
+     FROM tasks t
+     INNER JOIN (
+       SELECT runId, MAX(id) AS latestId
+       FROM tasks
+       GROUP BY runId
+     ) latest ON latest.latestId = t.id
+     ORDER BY t.id DESC
      LIMIT 120`
   );
 

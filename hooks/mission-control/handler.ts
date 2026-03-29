@@ -50,6 +50,9 @@ const lastRealRunId = new Map<string, string>();
 // Track pending write tool calls by toolCallId
 const pendingWrites = new Map<string, { filePath: string; content: string; sessionKey: string }>();
 
+// Track tool call metadata so result events can include original arguments.
+const pendingToolCalls = new Map<string, { toolName: string; args: Record<string, unknown> | undefined }>();
+
 // Fallback run tracking when agent-events stream is unavailable
 const commandRunIdBySession = new Map<string, string>();
 
@@ -205,6 +208,7 @@ async function saveToDatabase(payload: Record<string, unknown>) {
       source,
       message,
       eventType,
+      data,
       agentId,
       document,
     } = payload as {
@@ -218,6 +222,7 @@ async function saveToDatabase(payload: Record<string, unknown>) {
       source?: string | null;
       message?: string | null;
       eventType?: string | null;
+      data?: unknown;
       agentId?: string | null;
       document?: {
         title: string;
@@ -252,11 +257,11 @@ async function saveToDatabase(payload: Record<string, unknown>) {
     // Track general events (progress, tool usage, etc.)
     if (eventType && action === "progress") {
       const stmt = database.prepare(`
-        INSERT INTO events (runId, sessionKey, eventType, action, message, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO events (runId, sessionKey, eventType, action, message, data, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
-      stmt.run(runId, sessionKey, eventType, action, message || null, timestamp);
+      stmt.run(runId, sessionKey, eventType, action, message || null, data ? JSON.stringify(data) : null, timestamp);
 
       console.log(`[mission-control] Event saved: ${eventType}`);
     }
@@ -647,11 +652,16 @@ const handler = async (event: HookEvent) => {
           const toolName = evt.data?.name as string | undefined;
           const phase = evt.data?.phase as string | undefined;
           const toolCallId = evt.data?.toolCallId as string | undefined;
+          const args = evt.data?.args as Record<string, unknown> | undefined;
 
           // Use the last real runId if this is a follow-up/system run
           const effectiveRunId = lastRealRunId.get(sessionKey) || evt.runId;
 
           if (toolName && phase === "start") {
+            if (toolCallId) {
+              pendingToolCalls.set(toolCallId, { toolName, args });
+            }
+
             void postToMissionControl({
               runId: effectiveRunId,
               action: "progress",
@@ -659,6 +669,12 @@ const handler = async (event: HookEvent) => {
               timestamp: new Date(evt.ts).toISOString(),
               message: `🔧 Using tool: ${toolName}`,
               eventType: "tool:start",
+              data: {
+                toolName,
+                args: args || null,
+                phase,
+                toolCallId: toolCallId || null,
+              },
             });
 
             // Track write tool calls for document capture
@@ -671,6 +687,33 @@ const handler = async (event: HookEvent) => {
                 pendingWrites.set(toolCallId, { filePath, content, sessionKey });
                 console.log(`[mission-control] Tracking write: ${toolCallId} -> ${filePath}`);
               }
+            }
+          }
+
+          if (toolName && phase === "result") {
+            const tracked = toolCallId ? pendingToolCalls.get(toolCallId) : null;
+            const isError = evt.data?.isError as boolean | undefined;
+            const result = evt.data?.result ?? evt.data?.output ?? null;
+
+            void postToMissionControl({
+              runId: effectiveRunId,
+              action: "progress",
+              sessionKey,
+              timestamp: new Date(evt.ts).toISOString(),
+              message: `${isError ? "❌" : "✅"} Tool result: ${toolName}`,
+              eventType: "tool:result",
+              data: {
+                toolName,
+                args: tracked?.args || null,
+                result,
+                isError: Boolean(isError),
+                phase,
+                toolCallId: toolCallId || null,
+              },
+            });
+
+            if (toolCallId) {
+              pendingToolCalls.delete(toolCallId);
             }
           }
 
