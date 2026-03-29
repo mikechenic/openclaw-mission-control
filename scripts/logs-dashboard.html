@@ -275,20 +275,54 @@
 
     const row = (k, v) => `<div class="row"><div class="k">${escapeHtml(k)}</div><div class="v">${v}</div></div>`;
 
-    function renderTextBlock(value, label = "Details") {
+    function renderTextBlock(value, label = "Details", detailKey = "") {
       if (value === null || value === undefined || value === "") return "";
       const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-      return `<details><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(text)}</pre></details>`;
+      const keyAttr = detailKey ? ` data-detail-key="${escapeHtml(detailKey)}"` : "";
+      return `<details${keyAttr}><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(text)}</pre></details>`;
+    }
+
+    function captureListState(container) {
+      if (!container) {
+        return { scrollTop: 0, openKeys: new Set() };
+      }
+
+      const openKeys = new Set(
+        Array.from(container.querySelectorAll("details[open][data-detail-key]"))
+          .map((el) => el.getAttribute("data-detail-key"))
+          .filter(Boolean)
+      );
+
+      return {
+        scrollTop: container.scrollTop,
+        openKeys,
+      };
+    }
+
+    function restoreListState(container, state) {
+      if (!container || !state) return;
+
+      for (const el of container.querySelectorAll("details[data-detail-key]")) {
+        const key = el.getAttribute("data-detail-key");
+        if (key && state.openKeys.has(key)) {
+          el.open = true;
+        }
+      }
+
+      container.scrollTop = state.scrollTop;
     }
 
     function renderTasks(items) {
+      const state = captureListState(tasksList);
       tasksCount.textContent = String(items.length);
       if (!items.length) {
         tasksList.innerHTML = '<div class="empty">No task logs yet</div>';
+        restoreListState(tasksList, state);
         return;
       }
 
       tasksList.innerHTML = items.map((item) => {
+        const baseKey = `task:${item.id || item.runId || "unknown"}`;
         return `<article class="card">
           ${row("Status", `<span class="badge ${badgeClass(item.status)}">${escapeHtml(item.status || "unknown")}</span>`)}
           ${row("Run", escapeHtml(item.runId || "-"))}
@@ -296,21 +330,26 @@
           ${row("Agent", escapeHtml(item.agentId || "-"))}
           ${row("Source", escapeHtml(item.source || "-"))}
           ${row("At", escapeHtml(new Date(item.timestamp).toLocaleString()))}
-          ${renderTextBlock(item.prompt, "Prompt")}
-          ${renderTextBlock(item.response, "Response")}
-          ${renderTextBlock(item.error, "Error")}
+          ${renderTextBlock(item.prompt, "Prompt", `${baseKey}:prompt`)}
+          ${renderTextBlock(item.response, "Response", `${baseKey}:response`)}
+          ${renderTextBlock(item.error, "Error", `${baseKey}:error`)}
         </article>`;
       }).join("");
+
+      restoreListState(tasksList, state);
     }
 
     function renderEvents(items) {
+      const state = captureListState(eventsList);
       eventsCount.textContent = String(items.length);
       if (!items.length) {
         eventsList.innerHTML = '<div class="empty">No event logs yet</div>';
+        restoreListState(eventsList, state);
         return;
       }
 
       eventsList.innerHTML = items.map((item) => {
+        const baseKey = `event:${item.id || `${item.runId || "-"}:${item.timestamp || "-"}`}`;
         let parsedData = item.data;
         if (typeof parsedData === "string") {
           try {
@@ -327,33 +366,41 @@
           ${row("Session", escapeHtml(item.sessionKey || "-"))}
           ${row("Message", escapeHtml(item.message || "-"))}
           ${row("At", escapeHtml(new Date(item.timestamp).toLocaleString()))}
-          ${renderTextBlock(parsedData, "Event Data")}
+          ${renderTextBlock(parsedData, "Event Data", `${baseKey}:data`)}
         </article>`;
       }).join("");
+
+      restoreListState(eventsList, state);
     }
 
     function renderDocuments(items) {
+      const state = captureListState(docsList);
       docsCount.textContent = String(items.length);
       if (!items.length) {
         docsList.innerHTML = '<div class="empty">No document logs yet</div>';
+        restoreListState(docsList, state);
         return;
       }
 
       docsList.innerHTML = items.map((item) => {
+        const baseKey = `doc:${item.id || `${item.runId || "-"}:${item.title || "-"}`}`;
         return `<article class="card">
           ${row("Title", escapeHtml(item.title || "-"))}
-          ${row("Type", `<span class="badge neutral">${escapeHtml(item.type || "unknown")}</span>`)}
+          ${row("Type", `<span class="badge neutral">${escapeHtml(item.type || "unknown")}</span>`) }
           ${row("Path", escapeHtml(item.path || "-"))}
           ${row("Run", escapeHtml(item.runId || "-"))}
           ${row("Session", escapeHtml(item.sessionKey || "-"))}
           ${row("At", escapeHtml(new Date(item.timestamp).toLocaleString()))}
-          ${renderTextBlock(item.content, "Content")}
+          ${renderTextBlock(item.content, "Content", `${baseKey}:content`)}
         </article>`;
       }).join("");
+
+      restoreListState(docsList, state);
     }
 
     async function refresh() {
       try {
+        const pageScrollY = window.scrollY;
         const basePrefix = window.location.pathname.startsWith("/logs") ? "/logs" : "";
         const res = await fetch(`${basePrefix}/api/logs`, { cache: "no-store" });
         const data = await res.json();
@@ -371,6 +418,8 @@
         renderTasks(Array.isArray(data.tasks) ? data.tasks : []);
         renderEvents(Array.isArray(data.events) ? data.events : []);
         renderDocuments(Array.isArray(data.documents) ? data.documents : []);
+
+        window.scrollTo(window.scrollX, pageScrollY);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         tasksList.innerHTML = `<div class="empty">Failed to fetch logs: ${escapeHtml(msg)}</div>`;
