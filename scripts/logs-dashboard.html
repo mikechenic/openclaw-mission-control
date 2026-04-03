@@ -134,8 +134,6 @@
       background: #fff;
       display: grid;
       gap: 0.5rem;
-      transform: translateY(8px);
-      animation: rise 260ms ease forwards;
     }
 
     .row {
@@ -410,7 +408,10 @@
 
         renderTasks(Array.isArray(data.tasks) ? data.tasks : []);
 
-        window.scrollTo(window.scrollX, pageScrollY);
+        // Only restore when refresh caused a real jump to avoid micro-jitter.
+        if (Math.abs(window.scrollY - pageScrollY) > 2) {
+          window.scrollTo(window.scrollX, pageScrollY);
+        }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         tasksList.innerHTML = `<div class="empty">Failed to fetch logs: ${escapeHtml(msg)}</div>`;
