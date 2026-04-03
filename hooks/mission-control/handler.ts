@@ -94,6 +94,8 @@ function initializeDatabase(): InstanceType<typeof Database> {
       sessionKey TEXT NOT NULL,
       agentId TEXT,
       status TEXT NOT NULL CHECK (status IN ('start', 'end', 'error')),
+      title TEXT,
+      description TEXT,
       prompt TEXT,
       response TEXT,
       error TEXT,
@@ -108,6 +110,8 @@ function initializeDatabase(): InstanceType<typeof Database> {
       sessionKey TEXT NOT NULL,
       eventType TEXT NOT NULL,
       action TEXT NOT NULL,
+      title TEXT,
+      description TEXT,
       message TEXT,
       data JSON,
       timestamp DATETIME NOT NULL,
@@ -120,6 +124,7 @@ function initializeDatabase(): InstanceType<typeof Database> {
       sessionKey TEXT NOT NULL,
       agentId TEXT,
       title TEXT NOT NULL,
+      description TEXT,
       content TEXT,
       type TEXT NOT NULL,
       path TEXT,
@@ -157,6 +162,8 @@ function initializeDatabase(): InstanceType<typeof Database> {
       sessionKey TEXT NOT NULL,
       eventType TEXT NOT NULL,
       action TEXT NOT NULL,
+      title TEXT,
+      description TEXT,
       message TEXT,
       data JSON,
       timestamp DATETIME NOT NULL,
@@ -174,6 +181,7 @@ function initializeDatabase(): InstanceType<typeof Database> {
       sessionKey TEXT NOT NULL,
       agentId TEXT,
       title TEXT NOT NULL,
+      description TEXT,
       content TEXT,
       type TEXT NOT NULL,
       path TEXT,
@@ -202,6 +210,8 @@ async function saveToDatabase(payload: Record<string, unknown>) {
       action,
       sessionKey,
       timestamp,
+      title,
+      description,
       prompt,
       response,
       error,
@@ -216,6 +226,8 @@ async function saveToDatabase(payload: Record<string, unknown>) {
       action?: string;
       sessionKey?: string;
       timestamp?: string;
+      title?: string | null;
+      description?: string | null;
       prompt?: string | null;
       response?: string | null;
       error?: string | null;
@@ -226,6 +238,7 @@ async function saveToDatabase(payload: Record<string, unknown>) {
       agentId?: string | null;
       document?: {
         title: string;
+        description?: string;
         content: string;
         type: string;
         path?: string;
@@ -235,8 +248,8 @@ async function saveToDatabase(payload: Record<string, unknown>) {
     // Track task lifecycle
     if (action === "start" || action === "end" || action === "error") {
       const stmt = database.prepare(`
-        INSERT INTO tasks (runId, sessionKey, agentId, status, prompt, response, error, source, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tasks (runId, sessionKey, agentId, status, title, description, prompt, response, error, source, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -244,6 +257,8 @@ async function saveToDatabase(payload: Record<string, unknown>) {
         sessionKey,
         agentId || null,
         action,
+        title || null,
+        description || null,
         prompt || null,
         response || null,
         error || null,
@@ -257,11 +272,11 @@ async function saveToDatabase(payload: Record<string, unknown>) {
     // Track general events (progress, tool usage, etc.)
     if (eventType && action === "progress") {
       const stmt = database.prepare(`
-        INSERT INTO events (runId, sessionKey, eventType, action, message, data, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO events (runId, sessionKey, eventType, action, title, description, message, data, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      stmt.run(runId, sessionKey, eventType, action, message || null, data ? JSON.stringify(data) : null, timestamp);
+      stmt.run(runId, sessionKey, eventType, action, title || null, description || null, message || null, data ? JSON.stringify(data) : null, timestamp);
 
       console.log(`[mission-control] Event saved: ${eventType}`);
     }
@@ -269,8 +284,8 @@ async function saveToDatabase(payload: Record<string, unknown>) {
     // Track documents
     if (action === "document" && document) {
       const stmt = database.prepare(`
-        INSERT INTO documents (runId, sessionKey, agentId, title, content, type, path, eventType, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO documents (runId, sessionKey, agentId, title, description, content, type, path, eventType, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -278,6 +293,7 @@ async function saveToDatabase(payload: Record<string, unknown>) {
         sessionKey,
         agentId || null,
         document.title,
+        document.description || null,
         document.content,
         document.type,
         document.path || null,

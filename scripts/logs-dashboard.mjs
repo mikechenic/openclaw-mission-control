@@ -43,7 +43,7 @@ function safeQuery(sql) {
 
 function readLogs() {
   const tasks = safeQuery(
-    `SELECT t.id, t.runId, t.sessionKey, t.agentId, t.status, t.prompt, t.response, t.error, t.source, t.timestamp, t.createdAt
+    `SELECT t.id, t.runId, t.sessionKey, t.agentId, t.status, t.title, t.description, t.prompt, t.response, t.error, t.source, t.timestamp, t.createdAt
      FROM tasks t
      INNER JOIN (
        SELECT runId, MAX(id) AS latestId
@@ -55,23 +55,48 @@ function readLogs() {
   );
 
   const events = safeQuery(
-    `SELECT id, runId, sessionKey, eventType, action, message, data, timestamp, createdAt
+    `SELECT id, runId, sessionKey, eventType, action, title, description, message, data, timestamp, createdAt
      FROM events
      ORDER BY id DESC
      LIMIT 240`
   );
 
   const documents = safeQuery(
-    `SELECT id, runId, sessionKey, agentId, title, content, type, path, eventType, timestamp, createdAt
+    `SELECT id, runId, sessionKey, agentId, title, description, content, type, path, eventType, timestamp, createdAt
      FROM documents
      ORDER BY id DESC
      LIMIT 120`
   );
 
+  // Index events and documents by runId for efficient lookup
+  const eventsByRunId = new Map();
+  const documentsByRunId = new Map();
+
+  for (const event of Array.isArray(events) && !events.__error ? events : []) {
+    if (!eventsByRunId.has(event.runId)) {
+      eventsByRunId.set(event.runId, []);
+    }
+    eventsByRunId.get(event.runId).push(event);
+  }
+
+  for (const doc of Array.isArray(documents) && !documents.__error ? documents : []) {
+    if (!documentsByRunId.has(doc.runId)) {
+      documentsByRunId.set(doc.runId, []);
+    }
+    documentsByRunId.get(doc.runId).push(doc);
+  }
+
+  // Attach related events and documents to each task
+  const enrichedTasks = (Array.isArray(tasks) && !tasks.__error ? tasks : []).map(task => ({
+    ...task,
+    events: eventsByRunId.get(task.runId) || [],
+    documents: documentsByRunId.get(task.runId) || [],
+  }));
+
   return {
     dbPath,
     generatedAt: new Date().toISOString(),
-    tasks,
+    tasks: enrichedTasks,
     events,
     documents,
   };

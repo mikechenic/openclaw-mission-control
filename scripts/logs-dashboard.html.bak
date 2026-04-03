@@ -78,7 +78,7 @@
     }
 
     @media (min-width: 1000px) {
-      .grid { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
 
     .panel {
@@ -207,20 +207,6 @@
       background: #f8fafc;
     }
 
-    .nested-item {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 0.5rem;
-      background: #f9fafb;
-    }
-
-    .nested-header {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-bottom: 0.5rem;
-    }
-
     @keyframes rise {
       to { transform: translateY(0); }
     }
@@ -247,12 +233,28 @@
         <div class="panel-head"><h2>Tasks</h2><span class="count" id="tasksCount">0</span></div>
         <div class="list" id="tasksList"></div>
       </article>
+
+      <article class="panel">
+        <div class="panel-head"><h2>Events</h2><span class="count" id="eventsCount">0</span></div>
+        <div class="list" id="eventsList"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head"><h2>Documents</h2><span class="count" id="docsCount">0</span></div>
+        <div class="list" id="docsList"></div>
+      </article>
     </section>
   </main>
 
   <script>
     const tasksList = document.getElementById("tasksList");
+    const eventsList = document.getElementById("eventsList");
+    const docsList = document.getElementById("docsList");
+
     const tasksCount = document.getElementById("tasksCount");
+    const eventsCount = document.getElementById("eventsCount");
+    const docsCount = document.getElementById("docsCount");
+
     const dbPath = document.getElementById("dbPath");
     const updatedAt = document.getElementById("updatedAt");
 
@@ -290,14 +292,13 @@
           parsedData = event.data;
         }
       }
+
       const title = event.message || event.action || event.eventType || "Event";
-      const displayTitle = event.title || title;
       return `<div class="nested-item">
         <div class="nested-header">
           <span class="badge ${badgeClass(event.action)}" style="font-size: 0.75rem;">${escapeHtml(event.eventType || "event")}</span>
-          <span style="margin-left: 0.5rem; font-size: 0.9rem; color: #1e293b;">${escapeHtml(displayTitle)}</span>
+          <span style="margin-left: 0.5rem; font-size: 0.9rem;">${escapeHtml(title)}</span>
         </div>
-        ${event.description ? `<div style="margin-top: 0.3rem; font-size: 0.85rem; color: #64748b;">📝 ${escapeHtml(event.description)}</div>` : ""}
         ${renderTextBlock(parsedData, "Details", `${baseKey}:data`)}
       </div>`;
     }
@@ -308,9 +309,8 @@
       return `<div class="nested-item">
         <div class="nested-header">
           <span class="badge neutral" style="font-size: 0.75rem;">${escapeHtml(doc.type || "file")}</span>
-          <span style="margin-left: 0.5rem; font-size: 0.9rem; color: #1e293b;">${escapeHtml(title)}</span>
+          <span style="margin-left: 0.5rem; font-size: 0.9rem;">${escapeHtml(title)}</span>
         </div>
-        ${doc.description ? `<div style="margin-top: 0.3rem; font-size: 0.85rem; color: #64748b;">📝 ${escapeHtml(doc.description)}</div>` : ""}
         ${doc.path ? `<div class="row"><div class="k">Path</div><div class="v">${escapeHtml(doc.path)}</div></div>` : ""}
         ${renderTextBlock(doc.content, "Content", `${baseKey}:content`)}
       </div>`;
@@ -320,22 +320,29 @@
       if (!container) {
         return { scrollTop: 0, openKeys: new Set() };
       }
+
       const openKeys = new Set(
         Array.from(container.querySelectorAll("details[open][data-detail-key]"))
           .map((el) => el.getAttribute("data-detail-key"))
           .filter(Boolean)
       );
-      return { scrollTop: container.scrollTop, openKeys };
+
+      return {
+        scrollTop: container.scrollTop,
+        openKeys,
+      };
     }
 
     function restoreListState(container, state) {
       if (!container || !state) return;
+
       for (const el of container.querySelectorAll("details[data-detail-key]")) {
         const key = el.getAttribute("data-detail-key");
         if (key && state.openKeys.has(key)) {
           el.open = true;
         }
       }
+
       container.scrollTop = state.scrollTop;
     }
 
@@ -350,47 +357,79 @@
 
       tasksList.innerHTML = items.map((item) => {
         const baseKey = `task:${item.id || item.runId || "unknown"}`;
-        const taskTitle = item.prompt ? (item.prompt.length > 80 ? item.prompt.slice(0, 80) + "..." : item.prompt) : `Task ${item.runId || "unknown"}`;
-
-        let nestedSections = "";
-
-        if (item.events && item.events.length > 0) {
-          const eventCount = item.events.length;
-          const eventsHtml = item.events.map(renderEventRow).join("");
-          nestedSections += `<details data-detail-key="${baseKey}:events" style="margin-top: 0.75rem;"><summary style="font-weight: 600; color: #334155;">📋 Events (${eventCount})</summary><div style="margin-left: 0.5rem; margin-top: 0.5rem; display: grid; gap: 0.5rem;">${eventsHtml}</div></details>`;
-        }
-
-        if (item.documents && item.documents.length > 0) {
-          const docCount = item.documents.length;
-          const docsHtml = item.documents.map(renderDocumentRow).join("");
-          nestedSections += `<details data-detail-key="${baseKey}:documents" style="margin-top: 0.75rem;"><summary style="font-weight: 600; color: #334155;">📄 Documents (${docCount})</summary><div style="margin-left: 0.5rem; margin-top: 0.5rem; display: grid; gap: 0.5rem;">${docsHtml}</div></details>`;
-        }
-
         return `<article class="card">
-          <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
-            <span class="badge ${badgeClass(item.status)}">${escapeHtml(item.status || "unknown")}</span>
-            <span style="flex: 1; font-weight: 600; color: #1e293b;">${escapeHtml(taskTitle)}</span>
-          </div>
-          ${item.title ? `<div style="font-size: 0.9rem; font-weight: 500; color: #0f172a; margin-bottom: 0.5rem;">🎯 ${escapeHtml(item.title)}</div>` : ""}
-          ${item.description ? `<div style="font-size: 0.85rem; color: #64748b; margin-bottom: 0.5rem;">📝 ${escapeHtml(item.description)}</div>` : ""}
-          <details data-detail-key="${baseKey}:details" style="margin-top: 0.75rem;">
-            <summary style="font-weight: 600; color: #334155;">📋 Task Details</summary>
-            <div style="margin-top: 0.5rem; display: grid; gap: 0.5rem;">
-              ${row("Run", escapeHtml(item.runId || "-"))}
-              ${row("Session", escapeHtml(item.sessionKey || "-"))}
-              ${row("Agent", escapeHtml(item.agentId || "-"))}
-              ${row("Source", escapeHtml(item.source || "-"))}
-              ${row("At", escapeHtml(new Date(item.timestamp).toLocaleString()))}
-              ${renderTextBlock(item.prompt, "Prompt", `${baseKey}:prompt`)}
-              ${renderTextBlock(item.response, "Response", `${baseKey}:response`)}
-              ${renderTextBlock(item.error, "Error", `${baseKey}:error`)}
-            </div>
-          </details>
-          ${nestedSections}
+          ${row("Status", `<span class="badge ${badgeClass(item.status)}">${escapeHtml(item.status || "unknown")}</span>`)}
+          ${row("Run", escapeHtml(item.runId || "-"))}
+          ${row("Session", escapeHtml(item.sessionKey || "-"))}
+          ${row("Agent", escapeHtml(item.agentId || "-"))}
+          ${row("Source", escapeHtml(item.source || "-"))}
+          ${row("At", escapeHtml(new Date(item.timestamp).toLocaleString()))}
+          ${renderTextBlock(item.prompt, "Prompt", `${baseKey}:prompt`)}
+          ${renderTextBlock(item.response, "Response", `${baseKey}:response`)}
+          ${renderTextBlock(item.error, "Error", `${baseKey}:error`)}
         </article>`;
       }).join("");
 
       restoreListState(tasksList, state);
+    }
+
+    function renderEvents(items) {
+      const state = captureListState(eventsList);
+      eventsCount.textContent = String(items.length);
+      if (!items.length) {
+        eventsList.innerHTML = '<div class="empty">No event logs yet</div>';
+        restoreListState(eventsList, state);
+        return;
+      }
+
+      eventsList.innerHTML = items.map((item) => {
+        const baseKey = `event:${item.id || `${item.runId || "-"}:${item.timestamp || "-"}`}`;
+        let parsedData = item.data;
+        if (typeof parsedData === "string") {
+          try {
+            parsedData = JSON.parse(parsedData);
+          } catch {
+            parsedData = item.data;
+          }
+        }
+
+        return `<article class="card">
+          ${row("Type", `<span class="badge ${badgeClass(item.action)}">${escapeHtml(item.eventType || "event")}</span>`)}
+          ${row("Action", escapeHtml(item.action || "-"))}
+          ${row("Run", escapeHtml(item.runId || "-"))}
+          ${row("Session", escapeHtml(item.sessionKey || "-"))}
+          ${row("Message", escapeHtml(item.message || "-"))}
+          ${row("At", escapeHtml(new Date(item.timestamp).toLocaleString()))}
+          ${renderTextBlock(parsedData, "Event Data", `${baseKey}:data`)}
+        </article>`;
+      }).join("");
+
+      restoreListState(eventsList, state);
+    }
+
+    function renderDocuments(items) {
+      const state = captureListState(docsList);
+      docsCount.textContent = String(items.length);
+      if (!items.length) {
+        docsList.innerHTML = '<div class="empty">No document logs yet</div>';
+        restoreListState(docsList, state);
+        return;
+      }
+
+      docsList.innerHTML = items.map((item) => {
+        const baseKey = `doc:${item.id || `${item.runId || "-"}:${item.title || "-"}`}`;
+        return `<article class="card">
+          ${row("Title", escapeHtml(item.title || "-"))}
+          ${row("Type", `<span class="badge neutral">${escapeHtml(item.type || "unknown")}</span>`) }
+          ${row("Path", escapeHtml(item.path || "-"))}
+          ${row("Run", escapeHtml(item.runId || "-"))}
+          ${row("Session", escapeHtml(item.sessionKey || "-"))}
+          ${row("At", escapeHtml(new Date(item.timestamp).toLocaleString()))}
+          ${renderTextBlock(item.content, "Content", `${baseKey}:content`)}
+        </article>`;
+      }).join("");
+
+      restoreListState(docsList, state);
     }
 
     async function refresh() {
@@ -402,6 +441,8 @@
 
         if (data.error) {
           tasksList.innerHTML = `<div class="empty">${escapeHtml(data.error)}</div>`;
+          eventsList.innerHTML = `<div class="empty">${escapeHtml(data.error)}</div>`;
+          docsList.innerHTML = `<div class="empty">${escapeHtml(data.error)}</div>`;
           return;
         }
 
@@ -409,11 +450,15 @@
         updatedAt.textContent = `Updated: ${new Date(data.generatedAt).toLocaleString()}`;
 
         renderTasks(Array.isArray(data.tasks) ? data.tasks : []);
+        renderEvents(Array.isArray(data.events) ? data.events : []);
+        renderDocuments(Array.isArray(data.documents) ? data.documents : []);
 
         window.scrollTo(window.scrollX, pageScrollY);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         tasksList.innerHTML = `<div class="empty">Failed to fetch logs: ${escapeHtml(msg)}</div>`;
+        eventsList.innerHTML = `<div class="empty">Failed to fetch logs: ${escapeHtml(msg)}</div>`;
+        docsList.innerHTML = `<div class="empty">Failed to fetch logs: ${escapeHtml(msg)}</div>`;
       }
     }
 
