@@ -48,6 +48,7 @@ export default defineConfig({
 		},
 	],
 	server: {
+		allowedHosts: [".nip.io"],
 		proxy: {
 			"/hooks": {
 				target: "http://127.0.0.1:18789",
