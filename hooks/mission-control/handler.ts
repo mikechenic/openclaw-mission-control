@@ -346,7 +346,7 @@ async function getLastUserMessage(sessionFilePath: string, retries: number = 10)
   } catch (err) {
     if (retries > 0 && (err instanceof Error && err.message.includes("ENOENT"))) {
       // File doesn't exist yet, retry with exponential backoff
-      const delayMs = Math.pow(2, 5 - retries) * 100; // 1600ms, 800ms, 400ms, 200ms, 100ms
+      const delayMs = Math.pow(2, 10 - retries) * 100; // ..., 1600ms, 800ms, 400ms, 200ms, 100ms
       console.log(`[mission-control] Session file not ready, retrying in ${delayMs}ms (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, delayMs));
       return getLastUserMessage(sessionFilePath, retries - 1);
