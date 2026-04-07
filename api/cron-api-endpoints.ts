@@ -1,5 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
+declare const require: (id: string) => any;
+
+const fs = require("node:fs");
+const path = require("node:path");
 import {
   invokeGatewayMethod,
   parseJsonBody,
@@ -96,6 +98,38 @@ function listCronJobs() {
     version: parsed.version,
     total: jobs.length,
     jobs,
+  };
+}
+
+function findCronJobById(jobId: string) {
+  const store = listCronJobs();
+  if (!store.exists || !Array.isArray(store.jobs)) {
+    return null;
+  }
+  return store.jobs.find((job) => {
+    if (!job || typeof job !== "object") {
+      return false;
+    }
+    const candidateId = typeof (job as { id?: unknown }).id === "string" ? (job as { id: string }).id : "";
+    return candidateId === jobId;
+  }) ?? null;
+}
+
+function splitCronJobRoute(normalized: string) {
+  if (!normalized.startsWith("/jobs/")) {
+    return null;
+  }
+  const remainder = normalized.slice("/jobs/".length).trim();
+  if (!remainder) {
+    return null;
+  }
+  const parts = remainder.split("/").filter(Boolean);
+  if (!parts.length) {
+    return null;
+  }
+  return {
+    jobId: decodeURIComponent(parts[0] || "").trim(),
+    tail: parts.slice(1).join("/"),
   };
 }
 
@@ -202,10 +236,15 @@ async function proxyCronMethod(res: HttpResponseLike, method: CronRpcMethod, par
  * - GET  /api/cron/methods
  * - GET  /api/cron/storage
  * - GET  /api/cron/jobs
+ * - GET  /api/cron/jobs/<jobId>
+ * - PATCH /api/cron/jobs/<jobId>
+ * - PUT   /api/cron/jobs/<jobId>
+ * - DELETE /api/cron/jobs/<jobId>
  * - GET  /api/cron/runs?jobId=<id>&limit=200
  * - POST /api/cron/jobs            -> cron.add
  * - PATCH /api/cron/jobs           -> cron.update
  * - DELETE /api/cron/jobs          -> cron.remove
+ * - POST /api/cron/jobs/<jobId>/run -> cron.run
  * - POST /api/cron/run-now         -> cron.run with mode=force
  * - POST /api/cron/wake            -> wake
  * - POST /api/cron/rpc             -> generic method proxy
@@ -262,6 +301,55 @@ export function registerCronApi(server: ViteDevServerLike) {
 
       if (normalized === "/jobs" && method === "GET") {
         sendJson(res, listCronJobs());
+        return;
+      }
+
+      const jobRoute = splitCronJobRoute(normalized);
+      if (jobRoute) {
+        if (!jobRoute.jobId) {
+          sendJson(res, { error: "Missing cron job id" }, 400);
+          return;
+        }
+
+        if (jobRoute.tail === "") {
+          if (method === "GET") {
+            const job = findCronJobById(jobRoute.jobId);
+            if (!job) {
+              sendJson(res, { error: `Cron job '${jobRoute.jobId}' not found` }, 404);
+              return;
+            }
+            sendJson(res, { ok: true, job });
+            return;
+          }
+
+          if (method === "PATCH" || method === "PUT") {
+            const body = await readJsonRequestBody<Record<string, unknown>>(req);
+            await proxyCronMethod(res, CRON_RPC_METHODS.update, {
+              id: jobRoute.jobId,
+              ...body,
+            });
+            return;
+          }
+
+          if (method === "DELETE") {
+            await proxyCronMethod(res, CRON_RPC_METHODS.remove, {
+              id: jobRoute.jobId,
+            });
+            return;
+          }
+        }
+
+        if (jobRoute.tail === "run" && method === "POST") {
+          const body = await readJsonRequestBody<Record<string, unknown>>(req);
+          await proxyCronMethod(res, CRON_RPC_METHODS.run, {
+            id: jobRoute.jobId,
+            ...body,
+            mode: typeof body.mode === "string" ? body.mode : "force",
+          });
+          return;
+        }
+
+        sendJson(res, { error: "Not Found" }, 404);
         return;
       }
 
