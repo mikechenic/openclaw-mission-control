@@ -1,7 +1,5 @@
-declare const require: (id: string) => any;
-
-const fs = require("node:fs");
-const path = require("node:path");
+import fs from "node:fs";
+import path from "node:path";
 import {
   invokeGatewayMethod,
   parseJsonBody,
