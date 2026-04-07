@@ -1,16 +1,15 @@
-import fs from "node:fs";
-import path from "node:path";
+declare const require: (id: string) => any;
 
-type HttpResponseLike = {
-  statusCode: number;
-  setHeader: (name: string, value: string) => void;
-  end: (body: string) => void;
-};
-
-type HttpRequestLike = {
-  url?: string;
-  method?: string;
-};
+const fs = require("node:fs");
+const path = require("node:path");
+import {
+  invokeGatewayMethod,
+  parseJsonBody,
+  readRequestBody,
+  sendJson,
+  type HttpRequestLike,
+  type HttpResponseLike,
+} from "./gateway-rpc";
 
 type ViteDevServerLike = {
   middlewares: {
@@ -36,7 +35,7 @@ export const GATEWAY_PORT = 18789;
 export const GATEWAY_HTTP_BASE = `http://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 export const GATEWAY_WS_BASE = `ws://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 
-/** JSON-RPC WebSocket endpoint used by the dashboard/client. */
+/** Gateway WebSocket endpoint used by the dashboard/client. */
 export const GATEWAY_RPC_WS_ENDPOINT = `${GATEWAY_WS_BASE}/ws`;
 
 export const SUBAGENT_STORAGE = {
@@ -63,18 +62,18 @@ export const SUBAGENT_RPC_METHODS = {
 export type SubagentRpcMethod =
   (typeof SUBAGENT_RPC_METHODS)[keyof typeof SUBAGENT_RPC_METHODS];
 
+export type SubagentRpcRequest<TParams = unknown> = {
+  type: "req";
+  id: string | number;
+  method: SubagentRpcMethod;
+  params: TParams;
+};
+
 /** Tool names relevant to subagent creation/management during an agent run. */
 export const SUBAGENT_TOOL_NAMES = {
   spawn: "sessions_spawn",
   list: "subagents",
 } as const;
-
-export type JsonRpcRequest<TParams = unknown> = {
-  jsonrpc: "2.0";
-  id: string | number;
-  method: string;
-  params: TParams;
-};
 
 type PersistedSubagentRuns = {
   version?: number;
@@ -88,16 +87,6 @@ type SessionsIndexEntry = {
   sessionFile?: string;
   [key: string]: unknown;
 };
-
-function sendJson(res: HttpResponseLike, body: unknown, statusCode = 200) {
-  res.statusCode = statusCode;
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.end(JSON.stringify(body));
-}
 
 function readJsonFile(filePath: string): unknown {
   const raw = fs.readFileSync(filePath, "utf8");
@@ -184,9 +173,9 @@ export function buildSubagentRpcRequest<TParams>(
   id: string | number,
   method: SubagentRpcMethod,
   params: TParams,
-): JsonRpcRequest<TParams> {
+): SubagentRpcRequest<TParams> {
   return {
-    jsonrpc: "2.0",
+    type: "req",
     id,
     method,
     params,
@@ -197,16 +186,54 @@ export function subagentMethodList(): SubagentRpcMethod[] {
   return Object.values(SUBAGENT_RPC_METHODS);
 }
 
+async function readJsonRequestBody<T = Record<string, unknown>>(req: HttpRequestLike): Promise<T> {
+  const rawBody = await readRequestBody(req);
+  if (!rawBody.trim()) {
+    return {} as T;
+  }
+  return parseJsonBody(rawBody) as T;
+}
+
+async function proxySubagentMethod(res: HttpResponseLike, method: SubagentRpcMethod, params: unknown) {
+  try {
+    const response = await invokeGatewayMethod(method, params);
+    sendJson(res, {
+      ok: response.ok,
+      method,
+      response,
+    });
+  } catch (error) {
+    sendJson(
+      res,
+      {
+        ok: false,
+        method,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      502,
+    );
+  }
+}
+
 /**
- * Registers mission-control-style subagent helper endpoints:
- * - /api/subagents/health
- * - /api/subagents/methods
- * - /api/subagents/storage
- * - /api/subagents/runs
- * - /api/subagents/sessions
+ * Registers subagent helper endpoints and write-through action proxies:
+ * - GET  /api/subagents/health
+ * - GET  /api/subagents/methods
+ * - GET  /api/subagents/storage
+ * - GET  /api/subagents/runs
+ * - GET  /api/subagents/sessions
+ * - POST /api/subagents/sessions/send
+ * - POST /api/subagents/sessions/steer
+ * - POST /api/subagents/sessions/abort
+ * - POST /api/subagents/sessions/patch
+ * - POST /api/subagents/sessions/reset
+ * - DELETE /api/subagents/sessions/delete
+ * - POST /api/subagents/agent
+ * - POST /api/subagents/chat/send
+ * - POST /api/subagents/rpc
  */
 export function registerSubagentApi(server: ViteDevServerLike) {
-  const handler = (req: HttpRequestLike, res: HttpResponseLike) => {
+  const handler = async (req: HttpRequestLike, res: HttpResponseLike) => {
     const requestUrl = req.url || "/";
     const parsed = new URL(requestUrl, "http://localhost");
     const pathname = parsed.pathname;
@@ -258,13 +285,87 @@ export function registerSubagentApi(server: ViteDevServerLike) {
         return;
       }
 
-      if (normalized === "/runs") {
+      if (normalized === "/runs" && method === "GET") {
         sendJson(res, readSubagentRuns());
         return;
       }
 
-      if (normalized === "/sessions") {
+      if (normalized === "/sessions" && method === "GET") {
         sendJson(res, listSubagentSessions());
+        return;
+      }
+
+      if ((normalized === "/sessions/send" || normalized === "/send") && method === "POST") {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.send, await readJsonRequestBody(req));
+        return;
+      }
+
+      if ((normalized === "/sessions/steer" || normalized === "/steer") && method === "POST") {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.steer, await readJsonRequestBody(req));
+        return;
+      }
+
+      if ((normalized === "/sessions/abort" || normalized === "/abort") && method === "POST") {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.abort, await readJsonRequestBody(req));
+        return;
+      }
+
+      if ((normalized === "/sessions/patch" || normalized === "/patch") && (method === "POST" || method === "PATCH" || method === "PUT")) {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.patch, await readJsonRequestBody(req));
+        return;
+      }
+
+      if ((normalized === "/sessions/reset" || normalized === "/reset") && method === "POST") {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.reset, await readJsonRequestBody(req));
+        return;
+      }
+
+      if ((normalized === "/sessions/delete" || normalized === "/delete") && (method === "POST" || method === "DELETE")) {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.deleteSession, await readJsonRequestBody(req));
+        return;
+      }
+
+      if ((normalized === "/agent" || normalized === "/run-agent") && method === "POST") {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.runAgent, await readJsonRequestBody(req));
+        return;
+      }
+
+      if ((normalized === "/chat/send" || normalized === "/run-chat") && method === "POST") {
+        await proxySubagentMethod(res, SUBAGENT_RPC_METHODS.runChat, await readJsonRequestBody(req));
+        return;
+      }
+
+      if (normalized === "/rpc" && method === "POST") {
+        const body = await readJsonRequestBody<Record<string, unknown>>(req);
+        const requestMethod = typeof body.method === "string" ? body.method : "";
+        if (!Object.values(SUBAGENT_RPC_METHODS).includes(requestMethod as SubagentRpcMethod)) {
+          sendJson(res, { error: "Unsupported subagent method", method: requestMethod }, 400);
+          return;
+        }
+        await proxySubagentMethod(res, requestMethod as SubagentRpcMethod, body.params);
+        return;
+      }
+
+      if (
+        normalized === "/sessions/send" ||
+        normalized === "/send" ||
+        normalized === "/sessions/steer" ||
+        normalized === "/steer" ||
+        normalized === "/sessions/abort" ||
+        normalized === "/abort" ||
+        normalized === "/sessions/patch" ||
+        normalized === "/patch" ||
+        normalized === "/sessions/reset" ||
+        normalized === "/reset" ||
+        normalized === "/sessions/delete" ||
+        normalized === "/delete" ||
+        normalized === "/agent" ||
+        normalized === "/run-agent" ||
+        normalized === "/chat/send" ||
+        normalized === "/run-chat" ||
+        normalized === "/rpc"
+      ) {
+        sendJson(res, { error: "Method not allowed" }, 405);
         return;
       }
 
