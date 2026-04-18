@@ -1,5 +1,7 @@
 declare const process: { env: Record<string, string | undefined> };
 
+/// <reference path="./ws.d.ts" />
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -256,6 +258,28 @@ export async function createGatewayRpcClient(params: {
       ws.send(JSON.stringify(frame));
     });
 
+  ws.on("message", (data: unknown) => {
+    const text = toText(data);
+    let frame: GatewayFrame | null = null;
+    try {
+      frame = JSON.parse(text) as GatewayFrame;
+    } catch {
+      return;
+    }
+    if (!frame || typeof frame !== "object" || !("type" in frame)) {
+      return;
+    }
+    if (frame.type === "res") {
+      const response = frame as GatewayResponseFrame;
+      const waiter = pending.get(response.id);
+      if (waiter) {
+        pending.delete(response.id);
+        clearTimeout(waiter.timeout);
+        waiter.resolve(response);
+      }
+    }
+  });
+
   await new Promise<void>((resolve, reject) => {
     const openTimeout = setTimeout(() => {
       reject(new Error(`timeout opening gateway websocket at ${url}`));
@@ -300,28 +324,6 @@ export async function createGatewayRpcClient(params: {
       `gateway connect failed: ${JSON.stringify(connectResponse.error ?? connectResponse.payload ?? "unknown error")}`,
     );
   }
-
-  ws.on("message", (data: unknown) => {
-    const text = toText(data);
-    let frame: GatewayFrame | null = null;
-    try {
-      frame = JSON.parse(text) as GatewayFrame;
-    } catch {
-      return;
-    }
-    if (!frame || typeof frame !== "object" || !("type" in frame)) {
-      return;
-    }
-    if (frame.type === "res") {
-      const response = frame as GatewayResponseFrame;
-      const waiter = pending.get(response.id);
-      if (waiter) {
-        pending.delete(response.id);
-        clearTimeout(waiter.timeout);
-        waiter.resolve(response);
-      }
-    }
-  });
 
   ws.on("close", (code: number, reason: unknown) => {
     rejectAllPending(new Error(`gateway websocket closed (${code}): ${toText(reason)}`));
