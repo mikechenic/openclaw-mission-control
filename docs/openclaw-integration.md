@@ -1,4 +1,4 @@
-# OpenClaw Integration for Mission Control
+﻿# OpenClaw Integration for Mission Control
 
 ## Overview
 
@@ -9,12 +9,12 @@ Mission Control integrates with OpenClaw to automatically track agent tasks in r
 ## Architecture
 
 ```
-OpenClaw Lifecycle → emitAgentEvent() → onAgentEvent() listener → HTTP POST → Convex HTTP Endpoint → Mutation → Real-time UI
+OpenClaw Lifecycle -> emitAgentEvent() -> onAgentEvent() listener -> HTTP POST -> Convex HTTP Endpoint -> Mutation -> Real-time UI
 ```
 
 **Why this approach:**
 - No polling - event-driven via OpenClaw's existing agent event system
-- Zero OpenClaw source changes - uses user-installed hook in `~/.openclaw/hooks/`
+- Zero OpenClaw source changes - uses user-installed hook in `/root/.openclaw/hooks/`
 - Leverages `gateway:startup` hook to register a persistent `onAgentEvent()` listener
 - Captures user prompts from session files for meaningful task titles
 - Loose coupling - HTTP webhook between systems
@@ -37,7 +37,7 @@ OpenClaw Lifecycle → emitAgentEvent() → onAgentEvent() listener → HTTP POS
 2. **Hook listens for `agent:bootstrap`** - Captures session info (agentId, sessionId) for prompt extraction
 3. **Dynamically imports `onAgentEvent`** - from openclaw's `dist/infra/agent-events.js` module
 4. **Registers a persistent listener** - watches for lifecycle events (`stream: "lifecycle"`)
-5. **Extracts user prompt** - reads from session JSONL file at `~/.openclaw/agents/{agentId}/sessions/{sessionId}.jsonl`
+5. **Extracts user prompt** - reads from session JSONL file at `/root/.openclaw/agents/{agentId}/sessions/{sessionId}.jsonl`
 6. **Cleans metadata** - strips channel metadata (Telegram, Discord, etc.) while preserving source
 7. **POSTs to Mission Control** - on `phase: "start"` / `phase: "end"` / `phase: "error"`
 
@@ -52,7 +52,7 @@ OpenClaw Lifecycle → emitAgentEvent() → onAgentEvent() listener → HTTP POS
 | `convex/openclaw.ts` | Mutations to create/update tasks, add comments, track duration |
 | `convex/queries.ts` | Enriched queries with `lastMessageTime` for task cards |
 
-### OpenClaw Hook (`~/.openclaw/hooks/mission-control/`)
+### OpenClaw Hook (`/root/.openclaw/hooks/mission-control/`)
 
 | File | Purpose |
 |------|---------|
@@ -123,7 +123,7 @@ Key functions:
 
 ### Hook Handler
 
-**File: `~/.openclaw/hooks/mission-control/handler.ts`**
+**File: `/root/.openclaw/hooks/mission-control/handler.ts`**
 
 Key functions:
 - `extractCleanPrompt(rawPrompt)` - strips channel metadata, returns `{ prompt, source }`
@@ -137,13 +137,13 @@ Key functions:
 
 ### 1. Install the Hook
 
-Copy the hook files to `~/.openclaw/hooks/mission-control/`:
+Copy the hook files to `/root/.openclaw/hooks/mission-control/`:
 - `HOOK.md`
 - `handler.ts`
 
 ### 2. Configure OpenClaw
 
-Add to `~/.openclaw/config.jsonc`:
+Add to `/root/.openclaw/config.jsonc`:
 
 ```jsonc
 {
@@ -252,6 +252,7 @@ If no match is found, a system "OpenClaw" agent is created/used.
 - 1 file created (`convex/openclaw.ts`)
 
 **OpenClaw User Config:**
-- 2 files created (`~/.openclaw/hooks/mission-control/HOOK.md`, `handler.ts`)
+- 2 files created (`/root/.openclaw/hooks/mission-control/HOOK.md`, `handler.ts`)
 
 **Total: 6 files, no OpenClaw source changes, event-driven, real-time sync with rich features**
+

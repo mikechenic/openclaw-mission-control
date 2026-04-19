@@ -1,4 +1,4 @@
----
+﻿---
 name: mission-control
 description: "Sync agent lifecycle events to Mission Control dashboard"
 homepage: https://github.com/manish-raana/openclaw-mission-control
@@ -6,7 +6,7 @@ metadata:
   {
     "openclaw":
       {
-        "emoji": "📊",
+        "emoji": "chart",
         "events": ["gateway:startup", "agent:bootstrap", "command:new"],
         "install": [{ "id": "user", "kind": "user", "label": "User-installed hook" }],
       },
@@ -25,7 +25,7 @@ Stores agent lifecycle events in a local SQLite database for real-time task trac
 
 ## Configuration
 
-Add to `~/.openclaw/openclaw.json`:
+Add to `/root/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -63,3 +63,4 @@ You can also set `MISSION_CONTROL_DB_PATH` or `SQLITE_DB_PATH` as environment va
 ```bash
 openclaw hooks disable mission-control
 ```
+

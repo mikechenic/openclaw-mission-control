@@ -3,10 +3,11 @@ declare const process: { env: Record<string, string | undefined> };
 /// <reference path="./ws.d.ts" />
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
 import JSON5 from "json5";
+
+const OPENCLAW_ROOT_DIR = "/root/.openclaw";
 
 export type HttpRequestLike = {
   url?: string;
@@ -152,7 +153,7 @@ function resolveGatewayConfigPath(env: Record<string, string | undefined> = proc
   if (explicit) {
     return explicit;
   }
-  const stateDir = (env.OPENCLAW_STATE_DIR || path.join(os.homedir(), ".openclaw")).trim();
+  const stateDir = (env.OPENCLAW_STATE_DIR || OPENCLAW_ROOT_DIR).trim();
   return path.join(stateDir, "openclaw.json");
 }
 

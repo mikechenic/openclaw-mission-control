@@ -19,6 +19,13 @@ interface TaskRow {
   response: string | null;
   error: string | null;
   source: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostUsd: number | null;
+  responseUsage: string | null;
   timestamp: string;
   createdAt: string;
 }
@@ -113,6 +120,15 @@ function parsePositiveInt(value: string | null, defaultValue: number, maxValue: 
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return defaultValue;
   return Math.min(parsed, maxValue);
+}
+
+function parseJsonValue(value: string | null): unknown {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 function buildTaskFilters(options: LogsQueryOptions) {
@@ -227,6 +243,8 @@ function readLogs(options: LogsQueryOptions) {
   const tasks = safeQuery<TaskRow>(
     `SELECT t.id, t.runId, t.sessionKey, t.agentId, t.status, t.title, t.description,
           t.sessionId,
+          t.inputTokens, t.outputTokens, t.cacheReadTokens, t.cacheWriteTokens,
+          t.totalTokens, t.estimatedCostUsd, t.responseUsage,
             COALESCE(
               t.prompt,
               (
@@ -362,6 +380,7 @@ function readLogs(options: LogsQueryOptions) {
     },
     tasks: tasks.map((task) => ({
       ...task,
+      responseUsage: parseJsonValue(task.responseUsage),
       events: eventsByRunId.get(task.runId) || [],
       documents: documentsByRunId.get(task.runId) || [],
     })),

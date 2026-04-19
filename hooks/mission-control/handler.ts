@@ -37,9 +37,20 @@ type OpenClawConfig = {
   };
 };
 
+type UsageCapture = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  totalTokens?: number;
+  estimatedCostUsd?: number;
+  responseUsage?: Record<string, unknown> | null;
+};
+
 let listenerRegistered = false;
 let db: InstanceType<typeof Database> | null = null;
 let missionControlDbPath: string | undefined;
+const OPENCLAW_ROOT_DIR = "/root/.openclaw";
 
 // Track session info by sessionKey
 const sessionInfo = new Map<string, { agentId: string; sessionId: string }>();
@@ -56,6 +67,159 @@ const pendingToolCalls = new Map<string, { toolName: string; args: Record<string
 // Fallback run tracking when agent-events stream is unavailable
 const commandRunIdBySession = new Map<string, string>();
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const n = Number(value);
+    if (Number.isFinite(n)) {
+      return n;
+    }
+  }
+  return undefined;
+}
+
+function readNumericCandidate(root: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = toFiniteNumber(root[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function extractUsageCapture(value: unknown): UsageCapture {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const usageSources: Record<string, unknown>[] = [];
+  const candidates = [
+    value.responseUsage,
+    value.usage,
+    value.finalUsage,
+    value.message,
+    value.payload,
+    isRecord(value.metrics) ? value.metrics.usage : null,
+  ];
+
+  for (const candidate of candidates) {
+    if (isRecord(candidate)) {
+      usageSources.push(candidate);
+    }
+  }
+
+  const mergedUsage: Record<string, unknown> = {};
+  for (const source of usageSources) {
+    Object.assign(mergedUsage, source);
+  }
+
+  const inputTokens =
+    readNumericCandidate(value, ["inputTokens", "promptTokens"]) ??
+    readNumericCandidate(mergedUsage, ["input", "inputTokens", "prompt", "promptTokens"]);
+
+  const outputTokens =
+    readNumericCandidate(value, ["outputTokens", "completionTokens"]) ??
+    readNumericCandidate(mergedUsage, ["output", "outputTokens", "completion", "completionTokens"]);
+
+  const cacheReadTokens =
+    readNumericCandidate(value, ["cacheReadTokens"]) ??
+    readNumericCandidate(mergedUsage, ["cacheRead", "cacheReadTokens"]);
+
+  const cacheWriteTokens =
+    readNumericCandidate(value, ["cacheWriteTokens"]) ??
+    readNumericCandidate(mergedUsage, ["cacheWrite", "cacheWriteTokens"]);
+
+  const totalTokens =
+    readNumericCandidate(value, ["totalTokens"]) ??
+    readNumericCandidate(mergedUsage, ["total", "totalTokens"]);
+
+  const costFromUsage = isRecord(mergedUsage.cost)
+    ? readNumericCandidate(mergedUsage.cost, ["total", "usd"])
+    : undefined;
+
+  const estimatedCostUsd =
+    readNumericCandidate(value, ["estimatedCostUsd", "costUsd"]) ??
+    costFromUsage;
+
+  const responseUsage = usageSources.length ? mergedUsage : undefined;
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens:
+      totalTokens ??
+      ((inputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)),
+    estimatedCostUsd,
+    responseUsage: responseUsage ?? null,
+  };
+}
+
+function mergeUsageCapture(primary: UsageCapture, fallback: UsageCapture): UsageCapture {
+  return {
+    inputTokens: primary.inputTokens ?? fallback.inputTokens,
+    outputTokens: primary.outputTokens ?? fallback.outputTokens,
+    cacheReadTokens: primary.cacheReadTokens ?? fallback.cacheReadTokens,
+    cacheWriteTokens: primary.cacheWriteTokens ?? fallback.cacheWriteTokens,
+    totalTokens: primary.totalTokens ?? fallback.totalTokens,
+    estimatedCostUsd: primary.estimatedCostUsd ?? fallback.estimatedCostUsd,
+    responseUsage: primary.responseUsage ?? fallback.responseUsage ?? null,
+  };
+}
+
+async function getSessionUsageFromStore(agentId: string, sessionId: string): Promise<UsageCapture> {
+  try {
+    const storePath = path.join(OPENCLAW_ROOT_DIR, "agents", agentId, "sessions", "sessions.json");
+    const content = await fsp.readFile(storePath, "utf-8");
+    const parsed = JSON.parse(content) as unknown;
+    if (!isRecord(parsed)) {
+      return {};
+    }
+
+    let row: Record<string, unknown> | null = null;
+    const bySessionId = parsed[sessionId];
+    if (isRecord(bySessionId)) {
+      row = bySessionId;
+    } else {
+      for (const value of Object.values(parsed)) {
+        if (!isRecord(value)) continue;
+        const candidateSessionId = typeof value.sessionId === "string" ? value.sessionId : "";
+        if (candidateSessionId && candidateSessionId === sessionId) {
+          row = value;
+          break;
+        }
+      }
+    }
+
+    if (!row) {
+      return {};
+    }
+
+    const extracted = extractUsageCapture({
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cacheReadTokens: row.cacheReadTokens,
+      cacheWriteTokens: row.cacheWriteTokens,
+      totalTokens: row.totalTokens,
+      estimatedCostUsd: row.estimatedCostUsd,
+      responseUsage: row.responseUsage,
+      usage: row.responseUsage,
+    });
+
+    return extracted;
+  } catch {
+    return {};
+  }
+}
+
 function resolveDbPath(cfg?: OpenClawConfig): string | undefined {
   const hookConfig = cfg?.hooks?.internal?.entries?.["mission-control"];
   return hookConfig?.env?.MISSION_CONTROL_DB_PATH || hookConfig?.env?.SQLITE_DB_PATH || process.env.MISSION_CONTROL_DB_PATH || process.env.SQLITE_DB_PATH;
@@ -70,7 +234,7 @@ export function resolveUrl(cfg?: OpenClawConfig): string | undefined {
 function initializeDatabase(): InstanceType<typeof Database> {
   if (db) return db;
 
-  const defaultDbPath = "/root/.openclaw/mission-control/events.db";
+  const defaultDbPath = path.join(OPENCLAW_ROOT_DIR, "mission-control", "events.db");
   const configuredDbPath = missionControlDbPath?.trim();
   const dbPath = configuredDbPath ? path.resolve(configuredDbPath) : defaultDbPath;
   const dbDir = path.dirname(dbPath);
@@ -101,6 +265,13 @@ function initializeDatabase(): InstanceType<typeof Database> {
       response TEXT,
       error TEXT,
       source TEXT,
+      inputTokens INTEGER,
+      outputTokens INTEGER,
+      cacheReadTokens INTEGER,
+      cacheWriteTokens INTEGER,
+      totalTokens INTEGER,
+      estimatedCostUsd REAL,
+      responseUsage JSON,
       timestamp DATETIME NOT NULL,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -154,6 +325,13 @@ function initializeDatabase(): InstanceType<typeof Database> {
   };
 
   ensureColumnExists("tasks", "sessionId", "sessionId TEXT");
+  ensureColumnExists("tasks", "inputTokens", "inputTokens INTEGER");
+  ensureColumnExists("tasks", "outputTokens", "outputTokens INTEGER");
+  ensureColumnExists("tasks", "cacheReadTokens", "cacheReadTokens INTEGER");
+  ensureColumnExists("tasks", "cacheWriteTokens", "cacheWriteTokens INTEGER");
+  ensureColumnExists("tasks", "totalTokens", "totalTokens INTEGER");
+  ensureColumnExists("tasks", "estimatedCostUsd", "estimatedCostUsd REAL");
+  ensureColumnExists("tasks", "responseUsage", "responseUsage JSON");
   ensureColumnExists("events", "sessionId", "sessionId TEXT");
   ensureColumnExists("documents", "sessionId", "sessionId TEXT");
 
@@ -239,6 +417,13 @@ async function saveToDatabase(payload: Record<string, unknown>) {
       response,
       error,
       source,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      totalTokens,
+      estimatedCostUsd,
+      responseUsage,
       message,
       eventType,
       data,
@@ -256,6 +441,13 @@ async function saveToDatabase(payload: Record<string, unknown>) {
       response?: string | null;
       error?: string | null;
       source?: string | null;
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      cacheReadTokens?: number | null;
+      cacheWriteTokens?: number | null;
+      totalTokens?: number | null;
+      estimatedCostUsd?: number | null;
+      responseUsage?: Record<string, unknown> | null;
       message?: string | null;
       eventType?: string | null;
       data?: unknown;
@@ -272,8 +464,14 @@ async function saveToDatabase(payload: Record<string, unknown>) {
     // Track task lifecycle
     if (action === "start" || action === "end" || action === "error") {
       const stmt = database.prepare(`
-        INSERT INTO tasks (runId, sessionKey, sessionId, agentId, status, title, description, prompt, response, error, source, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tasks (
+          runId, sessionKey, sessionId, agentId, status, title, description,
+          prompt, response, error, source,
+          inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, totalTokens,
+          estimatedCostUsd, responseUsage,
+          timestamp
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -288,6 +486,13 @@ async function saveToDatabase(payload: Record<string, unknown>) {
         response || null,
         error || null,
         source || null,
+        inputTokens ?? null,
+        outputTokens ?? null,
+        cacheReadTokens ?? null,
+        cacheWriteTokens ?? null,
+        totalTokens ?? null,
+        estimatedCostUsd ?? null,
+        responseUsage ? JSON.stringify(responseUsage) : null,
         timestamp
       );
 
@@ -418,8 +623,7 @@ async function getLastAssistantMessage(sessionFilePath: string): Promise<string 
 }
 
 function getSessionFilePath(agentId: string, sessionId: string): string {
-  const home = os.homedir();
-  return path.join(home, ".openclaw", "agents", agentId, "sessions", `${sessionId}.jsonl`);
+  return path.join(OPENCLAW_ROOT_DIR, "agents", agentId, "sessions", `${sessionId}.jsonl`);
 }
 
 /**
@@ -678,6 +882,12 @@ const handler = async (event: HookEvent) => {
               }
             }
 
+            const usageFromEvent = extractUsageCapture(evt.data);
+            const usageFromStore = info
+              ? await getSessionUsageFromStore(info.agentId, info.sessionId)
+              : {};
+            const usage = mergeUsageCapture(usageFromEvent, usageFromStore);
+
             const endRunId = lastRealRunId.get(sessionKey) || evt.runId;
             sessionInfo.delete(sessionKey);
             void postToMissionControl({
@@ -687,9 +897,15 @@ const handler = async (event: HookEvent) => {
               sessionId: info?.sessionId,
               timestamp: new Date(evt.ts).toISOString(),
               response,
+              ...usage,
               eventType: "lifecycle:end",
             });
           } else if (phase === "error") {
+            const usageFromEvent = extractUsageCapture(evt.data);
+            const usageFromStore = info
+              ? await getSessionUsageFromStore(info.agentId, info.sessionId)
+              : {};
+            const usage = mergeUsageCapture(usageFromEvent, usageFromStore);
             const errorRunId = lastRealRunId.get(sessionKey) || evt.runId;
             sessionInfo.delete(sessionKey);
             void postToMissionControl({
@@ -699,6 +915,7 @@ const handler = async (event: HookEvent) => {
               sessionId: info?.sessionId,
               timestamp: new Date(evt.ts).toISOString(),
               error: evt.data?.error as string | undefined,
+              ...usage,
               eventType: "lifecycle:error",
             });
           }

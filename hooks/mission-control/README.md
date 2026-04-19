@@ -1,4 +1,4 @@
-# Mission Control Hook for OpenClaw
+﻿# Mission Control Hook for OpenClaw
 
 Syncs OpenClaw agent lifecycle events to the Mission Control dashboard for real-time task tracking.
 
@@ -10,13 +10,13 @@ Syncs OpenClaw agent lifecycle events to the Mission Control dashboard for real-
 
 ```
 OpenClaw Gateway
-    ├── gateway:startup → Hook registers lifecycle listener
-    ├── agent:bootstrap → Hook captures agent start
-    └── lifecycle events → Hook POSTs to Convex HTTP endpoint
-                              ↓
+    |- gateway:startup -> Hook registers lifecycle listener
+    |- agent:bootstrap -> Hook captures agent start
+    `- lifecycle events -> Hook POSTs to Convex HTTP endpoint
+          v
                         Mission Control
                         Convex Backend
-                              ↓
+          v
                         Real-time UI
 ```
 
@@ -25,19 +25,19 @@ OpenClaw Gateway
 ### 1. Create Hook Directory
 
 ```bash
-mkdir -p ~/.openclaw/hooks/mission-control
+mkdir -p /root/.openclaw/hooks/mission-control
 ```
 
 ### 2. Copy Hook Files
 
-Copy these files to `~/.openclaw/hooks/mission-control/`:
+Copy these files to `/root/.openclaw/hooks/mission-control/`:
 - `HOOK.md` - Hook metadata
 - `handler.ts` - Event handler
 - `README.md` - This file
 
 ### 3. Configure OpenClaw
 
-Add to `~/.openclaw/openclaw.json` under `hooks.internal.entries`:
+Add to `/root/.openclaw/openclaw.json` under `hooks.internal.entries`:
 
 ```json
 {
@@ -72,7 +72,7 @@ openclaw hooks list
 
 Should show:
 ```
-✓ ready   │ 📊 mission-control │ Sync agent lifecycle events to Mission Control dashboard │ openclaw-managed
+ready | mission-control | Sync agent lifecycle events to Mission Control dashboard | openclaw-managed
 ```
 
 Get detailed hook info:
@@ -171,7 +171,7 @@ openclaw hooks list
 openclaw hooks check
 ```
 
-- Check `~/.openclaw/hooks/mission-control/HOOK.md` exists
+- Check `/root/.openclaw/hooks/mission-control/HOOK.md` exists
 - Ensure `hooks.internal.enabled: true` in config
 
 ### Check Hook Details
@@ -209,10 +209,10 @@ openclaw hooks disable mission-control
 ## Files
 
 ```
-~/.openclaw/hooks/mission-control/
-├── HOOK.md      # Hook metadata (events: gateway:startup)
-├── handler.ts   # Event handler
-└── README.md    # This file
+/root/.openclaw/hooks/mission-control/
+|- HOOK.md      # Hook metadata (events: gateway:startup)
+|- handler.ts   # Event handler
+`- README.md    # This file
 ```
 
 ## Next Steps
@@ -222,3 +222,4 @@ To fix the module instance issue, potential approaches:
 2. Use a global/shared event bus
 3. Store listeners in a global object accessible to both instances
 4. Have openclaw's hook loader pass the agent-events module to hooks
+
