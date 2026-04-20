@@ -74,6 +74,21 @@ type CronJobsStore = {
   jobs?: unknown[];
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeCronAddParams(input: unknown): unknown {
+  if (!isRecord(input)) {
+    return input;
+  }
+  const candidate = input.job;
+  if (isRecord(candidate)) {
+    return candidate;
+  }
+  return input;
+}
+
 function readJsonFile(filePath: string): unknown {
   const raw = fs.readFileSync(filePath, "utf8");
   return JSON.parse(raw);
@@ -362,7 +377,8 @@ export function registerCronApi(server: ViteDevServerLike) {
       }
 
       if (normalized === "/jobs" && method === "POST") {
-        await proxyCronMethod(res, CRON_RPC_METHODS.add, await readJsonRequestBody(req));
+        const body = await readJsonRequestBody(req);
+        await proxyCronMethod(res, CRON_RPC_METHODS.add, normalizeCronAddParams(body));
         return;
       }
 
@@ -377,7 +393,8 @@ export function registerCronApi(server: ViteDevServerLike) {
       }
 
       if (normalized === "/add" && method === "POST") {
-        await proxyCronMethod(res, CRON_RPC_METHODS.add, await readJsonRequestBody(req));
+        const body = await readJsonRequestBody(req);
+        await proxyCronMethod(res, CRON_RPC_METHODS.add, normalizeCronAddParams(body));
         return;
       }
 
