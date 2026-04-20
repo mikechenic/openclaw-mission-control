@@ -157,25 +157,46 @@ function resolveGatewayConfigPath(env: Record<string, string | undefined> = proc
   return path.join(stateDir, "openclaw.json");
 }
 
+function resolveGatewayConfigPathCandidates(env: Record<string, string | undefined> = process.env): string[] {
+  const explicit = (env.OPENCLAW_CONFIG_PATH || "").trim();
+  if (explicit) {
+    return [explicit];
+  }
+
+  const stateDir = (env.OPENCLAW_STATE_DIR || OPENCLAW_ROOT_DIR).trim();
+  const candidates = [
+    path.join(stateDir, "openclaw.json"),
+    path.join(stateDir, "config.jsonc"),
+    path.join(stateDir, "clawdbot.json"),
+  ];
+
+  return Array.from(new Set(candidates));
+}
+
 function resolveGatewayAuthTokenFromConfig(env: Record<string, string | undefined> = process.env): string | null {
   try {
-    const configPath = resolveGatewayConfigPath(env);
-    if (!fs.existsSync(configPath)) {
-      return null;
-    }
-    const raw = fs.readFileSync(configPath, "utf8");
-    const parsed = JSON5.parse(raw) as {
-      gateway?: {
-        auth?: { token?: unknown };
-        remote?: { token?: unknown };
+    const configPaths = [resolveGatewayConfigPath(env), ...resolveGatewayConfigPathCandidates(env)];
+    for (const configPath of Array.from(new Set(configPaths))) {
+      if (!fs.existsSync(configPath)) {
+        continue;
+      }
+      const raw = fs.readFileSync(configPath, "utf8");
+      const parsed = JSON5.parse(raw) as {
+        gateway?: {
+          auth?: { token?: unknown };
+          remote?: { token?: unknown };
+        };
       };
-    };
-    const token = parsed.gateway?.auth?.token ?? parsed.gateway?.remote?.token;
-    if (typeof token !== "string") {
-      return null;
+      const token = parsed.gateway?.auth?.token ?? parsed.gateway?.remote?.token;
+      if (typeof token !== "string") {
+        continue;
+      }
+      const trimmed = token.trim();
+      if (trimmed) {
+        return trimmed;
+      }
     }
-    const trimmed = token.trim();
-    return trimmed ? trimmed : null;
+    return null;
   } catch {
     return null;
   }
@@ -302,12 +323,12 @@ export async function createGatewayRpcClient(params: {
       minProtocol: 3,
       maxProtocol: 3,
       client: {
-        id: "openclaw-api-endpoints",
-        displayName: "OpenClaw API endpoints",
+        id: "openclaw-control-ui",
+        displayName: "OpenClaw Mission Control API",
         version: "dev",
         platform: "dev",
         mode: "ui",
-        instanceId: "openclaw-api-endpoints",
+        instanceId: "openclaw-mission-control-api",
       },
       locale: "en-US",
       userAgent: "openclaw-api-endpoints",
